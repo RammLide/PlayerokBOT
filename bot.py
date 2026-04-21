@@ -737,8 +737,8 @@ def open_chat_callback(call):
     try:
         chat_id = call.data.replace("open_chat_", "")
         
-        # Получаем больше сообщений чата
-        messages = playerok_account.get_chat_messages(chat_id=chat_id, count=50)
+        # Получаем сообщения чата
+        messages = playerok_account.get_chat_messages(chat_id=chat_id, count=20)
         
         if not messages or not messages.messages:
             bot.answer_callback_query(call.id, text="❌ Чат пуст")
@@ -762,13 +762,10 @@ def open_chat_callback(call):
         }
         
         # Формируем текст с последними сообщениями
-        total_messages = len(messages.messages)
-        response = f"💬 Чат с {chat_name}\n"
-        response += f"📊 Всего сообщений: {total_messages}\n\n"
+        response = f"💬 Чат с {chat_name}\n\n"
         
-        # Показываем последние 15 сообщений
-        display_count = min(15, total_messages)
-        for msg in reversed(messages.messages[-display_count:]):
+        # Показываем последние 10 сообщений
+        for msg in reversed(messages.messages[-10:]):
             if hasattr(msg, 'user') and msg.user and hasattr(msg.user, 'id'):
                 sender = "Вы" if msg.user.id == playerok_account.id else (msg.user.username if hasattr(msg.user, 'username') else "Неизвестный")
             else:
@@ -782,9 +779,6 @@ def open_chat_callback(call):
                     msg_text = msg_text.replace(key, value)
             
             response += f"{sender}: {msg_text}\n\n"
-        
-        if total_messages > display_count:
-            response += f"... показаны последние {display_count} из {total_messages} сообщений"
         
         # Кнопки
         markup = types.InlineKeyboardMarkup()
