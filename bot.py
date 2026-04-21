@@ -737,7 +737,7 @@ def open_chat_callback(call):
     try:
         chat_id = call.data.replace("open_chat_", "")
         
-        # Получаем сообщения чата
+        # Получаем сообщения чата (без фильтра по статусу)
         messages = playerok_account.get_chat_messages(chat_id=chat_id, count=20)
         
         if not messages or not messages.messages:
@@ -762,10 +762,13 @@ def open_chat_callback(call):
         }
         
         # Формируем текст с последними сообщениями
-        response = f"💬 Чат с {chat_name}\n\n"
+        from datetime import datetime
+        current_time = datetime.now().strftime("%H:%M:%S")
+        response = f"💬 Чат с {chat_name}\n"
+        response += f"🕐 Обновлено: {current_time}\n\n"
         
-        # Показываем последние 10 сообщений
-        for msg in reversed(messages.messages[-10:]):
+        # Показываем ВСЕ сообщения (не только последние 10)
+        for msg in reversed(messages.messages):
             if hasattr(msg, 'user') and msg.user and hasattr(msg.user, 'id'):
                 sender = "Вы" if msg.user.id == playerok_account.id else (msg.user.username if hasattr(msg.user, 'username') else "Неизвестный")
             else:
@@ -806,11 +809,15 @@ def open_chat_callback(call):
             reply_markup=markup
         )
         
-        bot.answer_callback_query(call.id)
+        bot.answer_callback_query(call.id, text="✅ Обновлено")
         
     except Exception as e:
-        logger.error(f"Ошибка при открытии чата: {e}")
-        bot.answer_callback_query(call.id, text="❌ Ошибка при загрузке чата")
+        error_msg = str(e)
+        if "message is not modified" in error_msg:
+            bot.answer_callback_query(call.id, text="✅ Нет новых сообщений")
+        else:
+            logger.error(f"Ошибка при открытии чата: {e}")
+            bot.answer_callback_query(call.id, text="❌ Ошибка при загрузке чата")
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("reply_chat_"))
