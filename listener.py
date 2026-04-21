@@ -1,7 +1,7 @@
 import threading
 import logging
 from playerokapi.listener.listener import EventListener
-from playerokapi.enums import EventTypes
+from playerokapi.enums import EventTypes, ItemDealStatuses
 
 logger = logging.getLogger(__name__)
 
@@ -152,8 +152,8 @@ class PlayerokListener:
                     # Получаем сообщение для товара (с учетом приоритета)
                     custom_message = self.autoconfirm_settings.get_message_for_item(item_id)
                     
-                    # Подтверждаем сделку
-                    self.account.confirm_deal(deal_id=event.deal.id)
+                    # Подтверждаем сделку (статус SENT = товар отправлен)
+                    self.account.update_deal(deal_id=event.deal.id, new_status=ItemDealStatuses.SENT)
                     logger.info(f"Автоподтверждение: сделка {event.deal.id} подтверждена")
                     
                     # Отправляем сообщение покупателю, если настроено
