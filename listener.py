@@ -122,11 +122,24 @@ class PlayerokListener:
     
     def _handle_new_review(self, event):
         """Обработка нового отзыва"""
+        # У NewReviewEvent есть атрибут deal, а не review
+        # Отзыв находится в deal.review
+        review_text = "N/A"
+        rating = 0
+        username = "N/A"
+        
+        if hasattr(event, 'deal') and event.deal:
+            if hasattr(event.deal, 'review') and event.deal.review:
+                review_text = event.deal.review.text if hasattr(event.deal.review, 'text') else "N/A"
+                rating = event.deal.review.rating if hasattr(event.deal.review, 'rating') else 0
+            if hasattr(event.deal, 'buyer') and event.deal.buyer:
+                username = event.deal.buyer.username if hasattr(event.deal.buyer, 'username') else "N/A"
+        
         message_text = (
             f"⭐ Новый отзыв\n\n"
-            f"От: {event.review.user.username if hasattr(event.review, 'user') else 'N/A'}\n"
-            f"Оценка: {'⭐' * (event.review.rating if hasattr(event.review, 'rating') else 0)}\n"
-            f"Текст: {event.review.text if hasattr(event.review, 'text') else 'N/A'}"
+            f"От: {username}\n"
+            f"Оценка: {'⭐' * rating}\n"
+            f"Текст: {review_text}"
         )
         
         self._send_to_admins(message_text)
