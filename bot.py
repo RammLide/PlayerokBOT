@@ -9,11 +9,15 @@ from playerokapi.exceptions import *
 from playerokapi.enums import ItemStatuses
 import config
 from listener import PlayerokListener
+from autoconfirm import AutoConfirmSettings
 
 # Хранилище для состояния пользователей
 user_states = {}
 ITEMS_PER_PAGE = 15
 CHATS_PER_PAGE = 10
+
+# Инициализация настроек автоподтверждения
+autoconfirm_settings = AutoConfirmSettings()
 
 # Настройка логирования
 logging.basicConfig(
@@ -45,7 +49,7 @@ except Exception as e:
 playerok_listener = None
 if playerok_account and config.ADMIN_IDS:
     try:
-        playerok_listener = PlayerokListener(playerok_account, bot, config.ADMIN_IDS)
+        playerok_listener = PlayerokListener(playerok_account, bot, config.ADMIN_IDS, autoconfirm_settings)
         playerok_listener.start()
     except Exception as e:
         logger.error(f"Ошибка запуска слушателя событий: {e}")
@@ -62,10 +66,12 @@ def start_command(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     btn_products = types.KeyboardButton("📦 Мои товары")
     btn_chats = types.KeyboardButton("💬 Чаты")
+    btn_autoconfirm = types.KeyboardButton("⚙️ Автоподтверждение")
     btn_search = types.KeyboardButton("🔍 Поиск товара")
     btn_help = types.KeyboardButton("❓ Помощь")
     markup.add(btn_products, btn_chats)
-    markup.add(btn_search, btn_help)
+    markup.add(btn_autoconfirm, btn_search)
+    markup.add(btn_help)
     
     welcome_text = (
         f"👋 Привет, {message.from_user.first_name}!\n\n"
@@ -83,11 +89,13 @@ def help_command(message):
         "/start - Начать работу с ботом\n"
         "/products - Получить список всех товаров\n"
         "/chats - Открыть список чатов\n"
+        "/autoconfirm - Настройка автоподтверждения\n"
         "/search - Поиск товара по названию\n"
         "/help - Показать это сообщение\n\n"
         "Или используйте кнопки:\n"
         "📦 Мои товары - список активных товаров\n"
         "💬 Чаты - список чатов с покупателями\n"
+        "⚙️ Автоподтверждение - настройка автовыдачи\n"
         "🔍 Поиск товара - найти товар по названию\n"
         "❓ Помощь - это сообщение"
     )
@@ -104,6 +112,12 @@ def products_button_handler(message):
 def chats_button_handler(message):
     """Обработчик кнопки 'Чаты'"""
     chats_command(message)
+
+
+@bot.message_handler(func=lambda message: message.text == "⚙️ Автоподтверждение")
+def autoconfirm_button_handler(message):
+    """Обработчик кнопки 'Автоподтверждение'"""
+    autoconfirm_command(message)
 
 
 @bot.message_handler(func=lambda message: message.text == "🔍 Поиск товара")
@@ -549,6 +563,276 @@ def echo_all(message):
     # Проверяем, не отвечает ли пользователь в чате
     if message.from_user.id in user_states and user_states[message.from_user.id].startswith('replying_'):
         handle_chat_reply(message)
+    # Проверяем, не настраивает ли пользователь автоподтверждение
+    elif message.from_user.id in user_states and user_states[message.from_user.id].startswith('setting_'):
+        handle_autoconfirm_message(message)
+    else:
+        bot.reply_to(message, "Используйте /help для просмотра доступных команд.")
+
+
+@bot.message_handler(commands=['autoconfirm'])
+def autoconfirm_command(message):
+    """Обработчик команды /autoconfirm - настройка автоподтверждения"""
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ У вас нет доступа к этой команде.")
+        return
+    
+    if not playerok_account:
+        bot.reply_to(message, "❌ Ошибка: Playerok аккаунт не инициализирован.")
+        return
+    
+    # Формируем меню настроек
+    status = "✅ Включено" if autoconfirm_settings.is_enabled() else "❌ Выключено"
+    global_msg = autoconfirm_settings.get_global_message()
+    global_status = f"✅ Установлено" if global_msg else "❌ Не установлено"
+    
+    item_messages = autoconfirm_settings.get_all_item_messages()
+    item_count = len(item_messages)
+    
+    response = (
+        f"⚙️ Настройки автоподтверждения\n\n"
+        f"Статус: {status}\n"
+        f"Глобальное сообщение: {global_status}\n"
+        f"Настроено товаров: {item_count}\n\n"
+        f"Выберите действие:"
+    )
+    
+    markup = types.InlineKeyboardMarkup()
+    
+    # Кнопка включения/выключения
+    toggle_text = "❌ Выключить" if autoconfirm_settings.is_enabled() else "✅ Включить"
+    toggle_btn = types.InlineKeyboardButton(
+        text=toggle_text,
+        callback_data="autoconfirm_toggle"
+    )
+    
+    # Кнопка настройки глобального сообщения
+    global_btn = types.InlineKeyboardButton(
+        text="🌐 Сообщение для всех товаров",
+        callback_data="autoconfirm_global"
+    )
+    
+    # Кнопка настройки для конкретного товара
+    item_btn = types.InlineKeyboardButton(
+        text="📦 Сообщение для товара",
+        callback_data="autoconfirm_item"
+    )
+    
+    # Кнопка просмотра настроенных товаров
+    if item_count > 0:
+        view_btn = types.InlineKeyboardButton(
+            text=f"📋 Просмотр настроек ({item_count})",
+            callback_data="autoconfirm_view"
+        )
+        markup.add(toggle_btn)
+        markup.add(global_btn)
+        markup.add(item_btn)
+        markup.add(view_btn)
+    else:
+        markup.add(toggle_btn)
+        markup.add(global_btn)
+        markup.add(item_btn)
+    
+    bot.send_message(message.chat.id, response, reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "autoconfirm_toggle")
+def autoconfirm_toggle_callback(call):
+    """Переключение автоподтверждения"""
+    if autoconfirm_settings.is_enabled():
+        autoconfirm_settings.disable()
+        bot.answer_callback_query(call.id, text="❌ Автоподтверждение выключено")
+    else:
+        autoconfirm_settings.enable()
+        bot.answer_callback_query(call.id, text="✅ Автоподтверждение включено")
+    
+    # Обновляем меню
+    autoconfirm_command(call.message)
+    try:
+        bot.delete_message(call.message.chat.id, call.message.message_id)
+    except:
+        pass
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "autoconfirm_global")
+def autoconfirm_global_callback(call):
+    """Настройка глобального сообщения"""
+    user_states[call.from_user.id] = 'setting_global'
+    
+    current_msg = autoconfirm_settings.get_global_message()
+    if current_msg:
+        text = f"📝 Текущее глобальное сообщение:\n\n{current_msg}\n\n"
+    else:
+        text = "📝 Глобальное сообщение не установлено.\n\n"
+    
+    text += "Отправьте новое сообщение, которое будет отправляться всем покупателям после покупки.\n\n"
+    text += "Или отправьте /cancel для отмены."
+    
+    bot.answer_callback_query(call.id)
+    bot.send_message(call.message.chat.id, text)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "autoconfirm_item")
+def autoconfirm_item_callback(call):
+    """Выбор товара для настройки"""
+    try:
+        bot.answer_callback_query(call.id, text="⏳ Загружаю товары...")
+        
+        # Получаем все товары
+        all_items = get_all_active_items()
+        
+        if not all_items:
+            bot.send_message(call.message.chat.id, "❌ У вас нет активных товаров.")
+            return
+        
+        # Сохраняем товары для выбора
+        user_states[f"autoconfirm_items_{call.from_user.id}"] = all_items
+        
+        # Создаем кнопки с товарами
+        markup = types.InlineKeyboardMarkup()
+        for item in all_items[:15]:  # Показываем первые 15
+            has_message = autoconfirm_settings.get_item_message(item.id) is not None
+            prefix = "✅ " if has_message else ""
+            btn_text = f"{prefix}{item.name[:40]}"
+            btn = types.InlineKeyboardButton(
+                text=btn_text,
+                callback_data=f"autoconfirm_select_{item.id}"
+            )
+            markup.add(btn)
+        
+        back_btn = types.InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data="autoconfirm_back"
+        )
+        markup.add(back_btn)
+        
+        bot.send_message(
+            call.message.chat.id,
+            "📦 Выберите товар для настройки:\n\n✅ - сообщение уже настроено",
+            reply_markup=markup
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка при выборе товара: {e}")
+        bot.send_message(call.message.chat.id, f"❌ Ошибка: {str(e)}")
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("autoconfirm_select_"))
+def autoconfirm_select_item_callback(call):
+    """Настройка сообщения для выбранного товара"""
+    item_id = call.data.replace("autoconfirm_select_", "")
+    
+    # Находим товар
+    cached_items = user_states.get(f"autoconfirm_items_{call.from_user.id}", [])
+    selected_item = None
+    for item in cached_items:
+        if item.id == item_id:
+            selected_item = item
+            break
+    
+    if not selected_item:
+        bot.answer_callback_query(call.id, text="❌ Товар не найден")
+        return
+    
+    user_states[call.from_user.id] = f'setting_item_{item_id}'
+    
+    current_msg = autoconfirm_settings.get_item_message(item_id)
+    
+    text = f"📦 Товар: {selected_item.name}\n\n"
+    if current_msg:
+        text += f"📝 Текущее сообщение:\n{current_msg}\n\n"
+    else:
+        text += "📝 Сообщение не установлено.\n\n"
+    
+    text += "Отправьте новое сообщение для этого товара.\n\n"
+    text += "Или отправьте /cancel для отмены.\n"
+    text += "Или отправьте /delete для удаления сообщения."
+    
+    bot.answer_callback_query(call.id)
+    bot.send_message(call.message.chat.id, text)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "autoconfirm_view")
+def autoconfirm_view_callback(call):
+    """Просмотр настроенных товаров"""
+    item_messages = autoconfirm_settings.get_all_item_messages()
+    
+    if not item_messages:
+        bot.answer_callback_query(call.id, text="❌ Нет настроенных товаров")
+        return
+    
+    response = "📋 Настроенные товары:\n\n"
+    
+    for item_id, message in item_messages.items():
+        # Пытаемся получить название товара
+        try:
+            item = playerok_account.get_item(id=item_id)
+            item_name = item.name[:30]
+        except:
+            item_name = f"ID: {item_id[:8]}"
+        
+        response += f"📦 {item_name}\n"
+        response += f"💬 {message[:50]}...\n\n"
+    
+    markup = types.InlineKeyboardMarkup()
+    back_btn = types.InlineKeyboardButton(
+        text="◀️ Назад",
+        callback_data="autoconfirm_back"
+    )
+    markup.add(back_btn)
+    
+    bot.answer_callback_query(call.id)
+    bot.send_message(call.message.chat.id, response, reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "autoconfirm_back")
+def autoconfirm_back_callback(call):
+    """Возврат к меню автоподтверждения"""
+    bot.answer_callback_query(call.id)
+    autoconfirm_command(call.message)
+
+
+def handle_autoconfirm_message(message):
+    """Обработчик сообщений для настройки автоподтверждения"""
+    state = user_states.get(message.from_user.id, '')
+    
+    if message.text == '/cancel':
+        user_states.pop(message.from_user.id, None)
+        bot.reply_to(message, "❌ Отменено")
+        return
+    
+    if state == 'setting_global':
+        # Устанавливаем глобальное сообщение
+        autoconfirm_settings.set_global_message(message.text)
+        user_states.pop(message.from_user.id, None)
+        bot.reply_to(message, "✅ Глобальное сообщение установлено!")
+        
+    elif state.startswith('setting_item_'):
+        item_id = state.replace('setting_item_', '')
+        
+        if message.text == '/delete':
+            # Удаляем сообщение для товара
+            if autoconfirm_settings.remove_item_message(item_id):
+                bot.reply_to(message, "✅ Сообщение для товара удалено!")
+            else:
+                bot.reply_to(message, "❌ Сообщение не было установлено")
+        else:
+            # Устанавливаем сообщение для товара
+            autoconfirm_settings.set_item_message(item_id, message.text)
+            bot.reply_to(message, "✅ Сообщение для товара установлено!")
+        
+        user_states.pop(message.from_user.id, None)
+
+
+@bot.message_handler(func=lambda message: True)
+def echo_all(message):
+    """Обработчик всех остальных сообщений"""
+    # Проверяем, не отвечает ли пользователь в чате
+    if message.from_user.id in user_states and user_states[message.from_user.id].startswith('replying_'):
+        handle_chat_reply(message)
+    # Проверяем, не настраивает ли пользователь автоподтверждение
+    elif message.from_user.id in user_states and user_states[message.from_user.id].startswith('setting_'):
+        handle_autoconfirm_message(message)
     else:
         bot.reply_to(message, "Используйте /help для просмотра доступных команд.")
 

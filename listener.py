@@ -9,10 +9,11 @@ logger = logging.getLogger(__name__)
 class PlayerokListener:
     """Класс для прослушивания событий Playerok"""
     
-    def __init__(self, account, bot, admin_ids):
+    def __init__(self, account, bot, admin_ids, autoconfirm_settings=None):
         self.account = account
         self.bot = bot
         self.admin_ids = admin_ids
+        self.autoconfirm_settings = autoconfirm_settings
         self.listener = EventListener(account)
         self.running = False
         self.thread = None
@@ -140,6 +141,40 @@ class PlayerokListener:
         )
         
         self._send_to_admins(message_text)
+        
+        # Автоподтверждение заказа
+        if self.autoconfirm_settings and self.autoconfirm_settings.is_enabled():
+            try:
+                # Получаем ID товара
+                item_id = event.deal.item.id if hasattr(event.deal, 'item') and hasattr(event.deal.item, 'id') else None
+                
+                if item_id:
+                    # Получаем сообщение для товара (с учетом приоритета)
+                    custom_message = self.autoconfirm_settings.get_message_for_item(item_id)
+                    
+                    # Подтверждаем сделку
+                    self.account.confirm_deal(deal_id=event.deal.id)
+                    logger.info(f"Автоподтверждение: сделка {event.deal.id} подтверждена")
+                    
+                    # Отправляем сообщение покупателю, если настроено
+                    if custom_message and hasattr(event, 'chat') and event.chat:
+                        self.account.send_message(
+                            chat_id=event.chat.id,
+                            text=custom_message,
+                            mark_chat_as_read=True
+                        )
+                        logger.info(f"Автоподтверждение: сообщение отправлено в чат {event.chat.id}")
+                    
+                    # Уведомляем админов
+                    admin_msg = f"✅ Автоподтверждение выполнено\n\nСделка ID: {event.deal.id}"
+                    if custom_message:
+                        admin_msg += f"\n\nОтправлено сообщение:\n{custom_message[:100]}"
+                    self._send_to_admins(admin_msg)
+                    
+            except Exception as e:
+                logger.error(f"Ошибка автоподтверждения: {e}")
+                error_msg = f"❌ Ошибка автоподтверждения\n\nСделка ID: {event.deal.id}\nОшибка: {str(e)}"
+                self._send_to_admins(error_msg)
     
     def _handle_deal_problem(self, event):
         """Обработка проблемы в сделке"""
