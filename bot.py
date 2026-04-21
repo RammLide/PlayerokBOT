@@ -639,6 +639,10 @@ def autoconfirm_command(message):
 @bot.callback_query_handler(func=lambda call: call.data == "autoconfirm_toggle")
 def autoconfirm_toggle_callback(call):
     """Переключение автоподтверждения"""
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, text="❌ У вас нет доступа")
+        return
+    
     if autoconfirm_settings.is_enabled():
         autoconfirm_settings.disable()
         bot.answer_callback_query(call.id, text="❌ Автоподтверждение выключено")
@@ -647,9 +651,60 @@ def autoconfirm_toggle_callback(call):
         bot.answer_callback_query(call.id, text="✅ Автоподтверждение включено")
     
     # Обновляем меню
-    autoconfirm_command(call.message)
+    status = "✅ Включено" if autoconfirm_settings.is_enabled() else "❌ Выключено"
+    global_msg = autoconfirm_settings.get_global_message()
+    global_status = f"✅ Установлено" if global_msg else "❌ Не установлено"
+    
+    item_messages = autoconfirm_settings.get_all_item_messages()
+    item_count = len(item_messages)
+    
+    response = (
+        f"⚙️ Настройки автоподтверждения\n\n"
+        f"Статус: {status}\n"
+        f"Глобальное сообщение: {global_status}\n"
+        f"Настроено товаров: {item_count}\n\n"
+        f"Выберите действие:"
+    )
+    
+    markup = types.InlineKeyboardMarkup()
+    
+    toggle_text = "❌ Выключить" if autoconfirm_settings.is_enabled() else "✅ Включить"
+    toggle_btn = types.InlineKeyboardButton(
+        text=toggle_text,
+        callback_data="autoconfirm_toggle"
+    )
+    
+    global_btn = types.InlineKeyboardButton(
+        text="🌐 Сообщение для всех товаров",
+        callback_data="autoconfirm_global"
+    )
+    
+    item_btn = types.InlineKeyboardButton(
+        text="📦 Сообщение для товара",
+        callback_data="autoconfirm_item"
+    )
+    
+    if item_count > 0:
+        view_btn = types.InlineKeyboardButton(
+            text=f"📋 Просмотр настроек ({item_count})",
+            callback_data="autoconfirm_view"
+        )
+        markup.add(toggle_btn)
+        markup.add(global_btn)
+        markup.add(item_btn)
+        markup.add(view_btn)
+    else:
+        markup.add(toggle_btn)
+        markup.add(global_btn)
+        markup.add(item_btn)
+    
     try:
-        bot.delete_message(call.message.chat.id, call.message.message_id)
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=response,
+            reply_markup=markup
+        )
     except:
         pass
 
