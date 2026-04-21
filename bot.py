@@ -737,8 +737,8 @@ def open_chat_callback(call):
     try:
         chat_id = call.data.replace("open_chat_", "")
         
-        # Получаем сообщения чата
-        messages = playerok_account.get_chat_messages(chat_id=chat_id, count=20)
+        # Получаем больше сообщений чата
+        messages = playerok_account.get_chat_messages(chat_id=chat_id, count=50)
         
         if not messages or not messages.messages:
             bot.answer_callback_query(call.id, text="❌ Чат пуст")
@@ -762,10 +762,13 @@ def open_chat_callback(call):
         }
         
         # Формируем текст с последними сообщениями
-        response = f"💬 Чат с {chat_name}\n\n"
+        total_messages = len(messages.messages)
+        response = f"💬 Чат с {chat_name}\n"
+        response += f"📊 Всего сообщений: {total_messages}\n\n"
         
-        # Показываем последние 10 сообщений
-        for msg in reversed(messages.messages[-10:]):
+        # Показываем последние 15 сообщений
+        display_count = min(15, total_messages)
+        for msg in reversed(messages.messages[-display_count:]):
             if hasattr(msg, 'user') and msg.user and hasattr(msg.user, 'id'):
                 sender = "Вы" if msg.user.id == playerok_account.id else (msg.user.username if hasattr(msg.user, 'username') else "Неизвестный")
             else:
@@ -780,8 +783,16 @@ def open_chat_callback(call):
             
             response += f"{sender}: {msg_text}\n\n"
         
+        if total_messages > display_count:
+            response += f"... показаны последние {display_count} из {total_messages} сообщений"
+        
         # Кнопки
         markup = types.InlineKeyboardMarkup()
+        
+        refresh_btn = types.InlineKeyboardButton(
+            text="🔄 Обновить",
+            callback_data=f"open_chat_{chat_id}"
+        )
         reply_btn = types.InlineKeyboardButton(
             text="✍️ Ответить",
             callback_data=f"reply_chat_{chat_id}"
@@ -790,6 +801,7 @@ def open_chat_callback(call):
             text="◀️ Назад к чатам",
             callback_data="back_to_chats"
         )
+        markup.add(refresh_btn)
         markup.add(reply_btn)
         markup.add(back_btn)
         
