@@ -743,33 +743,158 @@ def autoconfirm_item_callback(call):
         # Сохраняем товары для выбора
         user_states[f"autoconfirm_items_{call.from_user.id}"] = all_items
         
-        # Создаем кнопки с товарами
-        markup = types.InlineKeyboardMarkup()
-        for item in all_items[:15]:  # Показываем первые 15
-            has_message = autoconfirm_settings.get_item_message(item.id) is not None
-            prefix = "✅ " if has_message else ""
-            btn_text = f"{prefix}{item.name[:40]}"
-            btn = types.InlineKeyboardButton(
-                text=btn_text,
-                callback_data=f"autoconfirm_select_{item.id}"
-            )
-            markup.add(btn)
-        
-        back_btn = types.InlineKeyboardButton(
-            text="◀️ Назад",
-            callback_data="autoconfirm_back"
-        )
-        markup.add(back_btn)
-        
-        bot.send_message(
-            call.message.chat.id,
-            "📦 Выберите товар для настройки:\n\n✅ - сообщение уже настроено",
-            reply_markup=markup
-        )
+        # Показываем первую страницу
+        show_autoconfirm_items_page(call.message.chat.id, call.from_user.id, page=0)
         
     except Exception as e:
         logger.error(f"Ошибка при выборе товара: {e}")
         bot.send_message(call.message.chat.id, f"❌ Ошибка: {str(e)}")
+
+
+def show_autoconfirm_items_page(chat_id, user_id, page=0, message_id=None):
+    """Показать страницу с товарами для настройки"""
+    all_items = user_states.get(f"autoconfirm_items_{user_id}", [])
+    
+    if not all_items:
+        return
+    
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    page_items = all_items[start_idx:end_idx]
+    
+    # Создаем кнопки с товарами
+    markup = types.InlineKeyboardMarkup()
+    
+    # Кнопка поиска
+    search_btn = types.InlineKeyboardButton(
+        text="🔍 Поиск товара",
+        callback_data="autoconfirm_search"
+    )
+    markup.add(search_btn)
+    
+    for item in page_items:
+        has_message = autoconfirm_settings.get_item_message(item.id) is not None
+        prefix = "✅ " if has_message else ""
+        btn_text = f"{prefix}{item.name[:40]}"
+        btn = types.InlineKeyboardButton(
+            text=btn_text,
+            callback_data=f"autoconfirm_select_{item.id}"
+        )
+        markup.add(btn)
+    
+    # Кнопки навигации
+    nav_buttons = []
+    
+    if page > 0:
+        nav_buttons.append(types.InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=f"autoconfirm_items_page_{page-1}"
+        ))
+    
+    total_pages = (len(all_items) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    nav_buttons.append(types.InlineKeyboardButton(
+        text=f"📄 {page + 1}/{total_pages}",
+        callback_data="current_page"
+    ))
+    
+    if end_idx < len(all_items):
+        nav_buttons.append(types.InlineKeyboardButton(
+            text="Вперед ▶️",
+            callback_data=f"autoconfirm_items_page_{page+1}"
+        ))
+    
+    if nav_buttons:
+        markup.row(*nav_buttons)
+    
+    back_btn = types.InlineKeyboardButton(
+        text="◀️ К настройкам",
+        callback_data="autoconfirm_back"
+    )
+    markup.add(back_btn)
+    
+    text = f"📦 Выберите товар для настройки:\n\n✅ - сообщение уже настроено\n\nВсего товаров: {len(all_items)}"
+    
+    if message_id:
+        try:
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                reply_markup=markup
+            )
+        except:
+            bot.send_message(chat_id, text, reply_markup=markup)
+    else:
+        bot.send_message(chat_id, text, reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("autoconfirm_items_page_"))
+def autoconfirm_items_page_callback(call):
+    """Навигация по страницам товаров"""
+    page = int(call.data.replace("autoconfirm_items_page_", ""))
+    bot.answer_callback_query(call.id)
+    show_autoconfirm_items_page(call.message.chat.id, call.from_user.id, page, call.message.message_id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "autoconfirm_search")
+def autoconfirm_search_callback(call):
+    """Поиск товара для настройки"""
+    user_states[call.from_user.id] = 'autoconfirm_searching'
+    bot.answer_callback_query(call.id)
+    bot.send_message(call.message.chat.id, "🔍 Введите название товара для поиска:")
+
+
+def handle_autoconfirm_search(message):
+    """Обработчик поиска товара для автоподтверждения"""
+    search_query = message.text.strip().lower()
+    
+    if len(search_query) < 2:
+        bot.reply_to(message, "❌ Запрос слишком короткий. Введите минимум 2 символа.")
+        return
+    
+    # Получаем все товары
+    all_items = user_states.get(f"autoconfirm_items_{message.from_user.id}", [])
+    
+    if not all_items:
+        all_items = get_all_active_items()
+        user_states[f"autoconfirm_items_{message.from_user.id}"] = all_items
+    
+    # Фильтруем
+    filtered_items = [
+        item for item in all_items 
+        if search_query in item.name.lower()
+    ]
+    
+    user_states.pop(message.from_user.id, None)
+    
+    if not filtered_items:
+        bot.reply_to(message, f"❌ Товары по запросу '{search_query}' не найдены.")
+        return
+    
+    # Показываем результаты
+    markup = types.InlineKeyboardMarkup()
+    
+    for item in filtered_items[:15]:
+        has_message = autoconfirm_settings.get_item_message(item.id) is not None
+        prefix = "✅ " if has_message else ""
+        btn_text = f"{prefix}{item.name[:40]}"
+        btn = types.InlineKeyboardButton(
+            text=btn_text,
+            callback_data=f"autoconfirm_select_{item.id}"
+        )
+        markup.add(btn)
+    
+    back_btn = types.InlineKeyboardButton(
+        text="◀️ К списку товаров",
+        callback_data="autoconfirm_item"
+    )
+    markup.add(back_btn)
+    
+    bot.send_message(
+        message.chat.id,
+        f"🔍 Найдено товаров: {len(filtered_items)}\n\n✅ - сообщение уже настроено",
+        reply_markup=markup
+    )
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("autoconfirm_select_"))
@@ -854,6 +979,11 @@ def handle_autoconfirm_message(message):
     if message.text == '/cancel':
         user_states.pop(message.from_user.id, None)
         bot.reply_to(message, "❌ Отменено")
+        return
+    
+    # Обработка поиска товара
+    if state == 'autoconfirm_searching':
+        handle_autoconfirm_search(message)
         return
     
     if state == 'setting_global':
