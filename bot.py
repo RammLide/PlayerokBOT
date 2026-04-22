@@ -581,6 +581,9 @@ def echo_all(message):
     # Проверяем, не настраивает ли пользователь автоподтверждение
     elif message.from_user.id in user_states and user_states[message.from_user.id].startswith('setting_'):
         handle_autoconfirm_message(message)
+    # Проверяем, не ищет ли пользователь игру
+    elif message.from_user.id in user_states and user_states[message.from_user.id] == 'create_searching_game':
+        handle_create_game_search(message)
     else:
         bot.reply_to(message, "Используйте /help для просмотра доступных команд.")
 
