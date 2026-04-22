@@ -2375,16 +2375,18 @@ def create_items_in_categories(user_id, chat_id):
                     logger.error(f"API вернул None для типов получения категории {category_id}")
                     continue
                 
-                if not hasattr(obtaining_types, 'obtaining_types') or not obtaining_types.obtaining_types:
-                    errors.append(f"⚠️ {category.name}: категория не поддерживает создание товаров (нет типов получения)")
-                    logger.warning(f"У категории {category_id} ({category.name}) нет obtaining_types - пропускаем")
+                # Проверяем наличие типов получения
+                obtaining_type = None
+                if hasattr(obtaining_types, 'obtaining_types') and obtaining_types.obtaining_types:
+                    logger.info(f"Найдено типов получения: {len(obtaining_types.obtaining_types)}")
+                    obtaining_type = obtaining_types.obtaining_types[0]
+                    logger.info(f"Используется тип получения: {obtaining_type.name if hasattr(obtaining_type, 'name') else obtaining_type.id}")
+                else:
+                    # Для категорий без типов получения (например "Другое") попробуем создать без них
+                    logger.warning(f"У категории {category.name} нет типов получения, попробуем создать товар без них")
+                    # Пропускаем эту категорию, так как без obtaining_type_id не получится создать товар
+                    errors.append(f"⚠️ {category.name}: категория не поддерживает создание товаров через API")
                     continue
-                
-                logger.info(f"Найдено типов получения: {len(obtaining_types.obtaining_types)}")
-                
-                # Берем первый тип получения
-                obtaining_type = obtaining_types.obtaining_types[0]
-                logger.info(f"Используется тип получения: {obtaining_type.name if hasattr(obtaining_type, 'name') else obtaining_type.id}")
                 
                 # Получаем опции категории (если есть)
                 options = []
