@@ -72,12 +72,13 @@ def start_command(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     btn_products = types.KeyboardButton("📦 Мои товары")
     btn_chats = types.KeyboardButton("💬 Чаты")
+    btn_create = types.KeyboardButton("➕ Создать товар")
     btn_autoconfirm = types.KeyboardButton("⚙️ Автоподтверждение")
     btn_search = types.KeyboardButton("🔍 Поиск товара")
     btn_help = types.KeyboardButton("❓ Помощь")
     markup.add(btn_products, btn_chats)
-    markup.add(btn_autoconfirm, btn_search)
-    markup.add(btn_help)
+    markup.add(btn_create, btn_autoconfirm)
+    markup.add(btn_search, btn_help)
     
     welcome_text = (
         f"👋 Привет, {message.from_user.first_name}!\n\n"
@@ -95,12 +96,14 @@ def help_command(message):
         "/start - Начать работу с ботом\n"
         "/products - Получить список всех товаров\n"
         "/chats - Открыть список чатов\n"
+        "/create - Создать новый товар\n"
         "/autoconfirm - Настройка автоподтверждения\n"
         "/search - Поиск товара по названию\n"
         "/help - Показать это сообщение\n\n"
         "Или используйте кнопки:\n"
         "📦 Мои товары - список активных товаров\n"
         "💬 Чаты - список чатов с покупателями\n"
+        "➕ Создать товар - создание нового товара\n"
         "⚙️ Автоподтверждение - настройка автовыдачи\n"
         "🔍 Поиск товара - найти товар по названию\n"
         "❓ Помощь - это сообщение"
@@ -124,6 +127,12 @@ def chats_button_handler(message):
 def autoconfirm_button_handler(message):
     """Обработчик кнопки 'Автоподтверждение'"""
     autoconfirm_command(message)
+
+
+@bot.message_handler(func=lambda message: message.text == "➕ Создать товар")
+def create_item_button_handler(message):
+    """Обработчик кнопки 'Создать товар'"""
+    create_item_command(message)
 
 
 @bot.message_handler(func=lambda message: message.text == "🔍 Поиск товара")
@@ -1785,6 +1794,492 @@ def autorestore_delete_group_callback(call):
     
     # Возвращаемся к списку групп
     autorestore_view_callback(call)
+
+
+# ============= СОЗДАНИЕ ТОВАРОВ =============
+
+@bot.message_handler(commands=['create'])
+def create_item_command(message):
+    """Обработчик команды /create - создание товара"""
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "❌ У вас нет доступа к этой команде.")
+        return
+    
+    if not playerok_account:
+        bot.reply_to(message, "❌ Ошибка: Playerok аккаунт не инициализирован.")
+        return
+    
+    try:
+        # Получаем список игр
+        bot.reply_to(message, "⏳ Загружаю список игр...")
+        
+        games_list = playerok_account.get_games(count=24)
+        
+        if not games_list or not games_list.games:
+            bot.reply_to(message, "❌ Не удалось получить список игр.")
+            return
+        
+        # Сохраняем игры для выбора
+        user_states[f"create_games_{message.from_user.id}"] = games_list.games
+        user_states[f"create_selected_categories_{message.from_user.id}"] = []
+        
+        # Показываем список игр
+        show_games_list(message.chat.id, message.from_user.id)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при создании товара: {e}")
+        bot.reply_to(message, f"❌ Произошла ошибка: {str(e)}")
+
+
+def show_games_list(chat_id, user_id, message_id=None):
+    """Показать список игр для выбора"""
+    games = user_states.get(f"create_games_{user_id}", [])
+    
+    if not games:
+        return
+    
+    markup = types.InlineKeyboardMarkup()
+    
+    for game in games[:15]:  # Показываем первые 15 игр
+        btn = types.InlineKeyboardButton(
+            text=game.name,
+            callback_data=f"create_game_{game.id}"
+        )
+        markup.add(btn)
+    
+    cancel_btn = types.InlineKeyboardButton(
+        text="❌ Отмена",
+        callback_data="create_cancel"
+    )
+    markup.add(cancel_btn)
+    
+    text = "🎮 Выберите игру для создания товара:"
+    
+    if message_id:
+        try:
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                reply_markup=markup
+            )
+        except:
+            bot.send_message(chat_id, text, reply_markup=markup)
+    else:
+        bot.send_message(chat_id, text, reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("create_game_"))
+def create_game_select_callback(call):
+    """Обработчик выбора игры"""
+    try:
+        game_id = call.data.replace("create_game_", "")
+        
+        # Получаем полную информацию об игре с категориями
+        game = playerok_account.get_game(id=game_id)
+        
+        if not game or not game.categories:
+            bot.answer_callback_query(call.id, text="❌ У этой игры нет категорий")
+            return
+        
+        # Сохраняем игру и её категории
+        user_states[f"create_current_game_{call.from_user.id}"] = game
+        
+        bot.answer_callback_query(call.id)
+        
+        # Показываем категории игры
+        show_game_categories(call.message.chat.id, call.from_user.id, game, call.message.message_id)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при выборе игры: {e}")
+        bot.answer_callback_query(call.id, text="❌ Ошибка при загрузке категорий")
+
+
+def show_game_categories(chat_id, user_id, game, message_id=None):
+    """Показать категории выбранной игры"""
+    selected_categories = user_states.get(f"create_selected_categories_{user_id}", [])
+    
+    markup = types.InlineKeyboardMarkup()
+    
+    for category in game.categories:
+        is_selected = category.id in selected_categories
+        prefix = "✅ " if is_selected else "⬜ "
+        btn_text = f"{prefix}{category.name}"
+        btn = types.InlineKeyboardButton(
+            text=btn_text,
+            callback_data=f"create_toggle_cat_{category.id}"
+        )
+        markup.add(btn)
+    
+    # Кнопки управления
+    nav_buttons = []
+    
+    # Кнопка "Выбрать другую игру"
+    back_btn = types.InlineKeyboardButton(
+        text="◀️ Другая игра",
+        callback_data="create_back_to_games"
+    )
+    nav_buttons.append(back_btn)
+    
+    # Кнопка "Продолжить" если выбрана хотя бы одна категория
+    if selected_categories:
+        continue_btn = types.InlineKeyboardButton(
+            text=f"✅ Продолжить ({len(selected_categories)})",
+            callback_data="create_continue"
+        )
+        nav_buttons.append(continue_btn)
+    
+    if nav_buttons:
+        markup.row(*nav_buttons)
+    
+    cancel_btn = types.InlineKeyboardButton(
+        text="❌ Отмена",
+        callback_data="create_cancel"
+    )
+    markup.add(cancel_btn)
+    
+    text = (
+        f"🎮 Игра: {game.name}\n\n"
+        f"📁 Выберите категории для товара:\n\n"
+        f"Выбрано: {len(selected_categories)}\n\n"
+        f"💡 Можно выбрать несколько категорий - товар будет создан во всех выбранных."
+    )
+    
+    if message_id:
+        try:
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                reply_markup=markup
+            )
+        except:
+            bot.send_message(chat_id, text, reply_markup=markup)
+    else:
+        bot.send_message(chat_id, text, reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("create_toggle_cat_"))
+def create_toggle_category_callback(call):
+    """Переключение выбора категории"""
+    category_id = call.data.replace("create_toggle_cat_", "")
+    
+    selected_categories = user_states.get(f"create_selected_categories_{call.from_user.id}", [])
+    
+    if category_id in selected_categories:
+        selected_categories.remove(category_id)
+    else:
+        selected_categories.append(category_id)
+    
+    user_states[f"create_selected_categories_{call.from_user.id}"] = selected_categories
+    
+    bot.answer_callback_query(call.id)
+    
+    # Обновляем список категорий
+    game = user_states.get(f"create_current_game_{call.from_user.id}")
+    if game:
+        show_game_categories(call.message.chat.id, call.from_user.id, game, call.message.message_id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "create_back_to_games")
+def create_back_to_games_callback(call):
+    """Возврат к списку игр"""
+    bot.answer_callback_query(call.id)
+    show_games_list(call.message.chat.id, call.from_user.id, call.message.message_id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "create_continue")
+def create_continue_callback(call):
+    """Продолжить создание товара - ввод данных"""
+    selected_categories = user_states.get(f"create_selected_categories_{call.from_user.id}", [])
+    
+    if not selected_categories:
+        bot.answer_callback_query(call.id, text="❌ Выберите хотя бы одну категорию")
+        return
+    
+    # Переходим к вводу названия товара
+    user_states[call.from_user.id] = 'create_entering_name'
+    
+    bot.answer_callback_query(call.id)
+    bot.send_message(
+        call.message.chat.id,
+        f"📝 Введите название товара:\n\n"
+        f"Товар будет создан в {len(selected_categories)} категориях.\n\n"
+        f"Или отправьте /cancel для отмены."
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "create_cancel")
+def create_cancel_callback(call):
+    """Отмена создания товара"""
+    user_states.pop(f"create_games_{call.from_user.id}", None)
+    user_states.pop(f"create_current_game_{call.from_user.id}", None)
+    user_states.pop(f"create_selected_categories_{call.from_user.id}", None)
+    user_states.pop(f"create_item_data_{call.from_user.id}", None)
+    user_states.pop(call.from_user.id, None)
+    
+    bot.answer_callback_query(call.id, text="❌ Создание товара отменено")
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text="❌ Создание товара отменено"
+    )
+
+
+@bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == 'create_entering_name')
+def handle_create_name(message):
+    """Обработчик ввода названия товара"""
+    if message.text == '/cancel':
+        user_states.pop(message.from_user.id, None)
+        bot.reply_to(message, "❌ Отменено")
+        return
+    
+    # Сохраняем название
+    item_data = user_states.get(f"create_item_data_{message.from_user.id}", {})
+    item_data['name'] = message.text
+    user_states[f"create_item_data_{message.from_user.id}"] = item_data
+    
+    # Переходим к вводу цены
+    user_states[message.from_user.id] = 'create_entering_price'
+    bot.reply_to(message, "💰 Введите цену товара (в рублях, только число):")
+
+
+@bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == 'create_entering_price')
+def handle_create_price(message):
+    """Обработчик ввода цены товара"""
+    if message.text == '/cancel':
+        user_states.pop(message.from_user.id, None)
+        bot.reply_to(message, "❌ Отменено")
+        return
+    
+    try:
+        price = int(message.text)
+        if price <= 0:
+            bot.reply_to(message, "❌ Цена должна быть больше 0. Попробуйте еще раз:")
+            return
+        
+        # Сохраняем цену
+        item_data = user_states.get(f"create_item_data_{message.from_user.id}", {})
+        item_data['price'] = price
+        user_states[f"create_item_data_{message.from_user.id}"] = item_data
+        
+        # Переходим к вводу описания
+        user_states[message.from_user.id] = 'create_entering_description'
+        bot.reply_to(message, "📄 Введите описание товара:")
+        
+    except ValueError:
+        bot.reply_to(message, "❌ Неверный формат. Введите число (например: 100):")
+
+
+@bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == 'create_entering_description')
+def handle_create_description(message):
+    """Обработчик ввода описания товара"""
+    if message.text == '/cancel':
+        user_states.pop(message.from_user.id, None)
+        bot.reply_to(message, "❌ Отменено")
+        return
+    
+    # Сохраняем описание
+    item_data = user_states.get(f"create_item_data_{message.from_user.id}", {})
+    item_data['description'] = message.text
+    user_states[f"create_item_data_{message.from_user.id}"] = item_data
+    
+    # Переходим к загрузке фото
+    user_states[message.from_user.id] = 'create_uploading_photo'
+    bot.reply_to(message, "📸 Отправьте фото товара:")
+
+
+@bot.message_handler(content_types=['photo'], func=lambda message: user_states.get(message.from_user.id) == 'create_uploading_photo')
+def handle_create_photo(message):
+    """Обработчик загрузки фото товара"""
+    try:
+        # Получаем файл фото
+        file_id = message.photo[-1].file_id
+        file_info = bot.get_file(file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        
+        # Сохраняем фото временно
+        import time
+        timestamp = int(time.time())
+        photo_filename = f"item_photos/temp_{timestamp}_{message.from_user.id}.jpg"
+        
+        with open(photo_filename, 'wb') as f:
+            f.write(downloaded_file)
+        
+        # Сохраняем путь к фото
+        item_data = user_states.get(f"create_item_data_{message.from_user.id}", {})
+        item_data['photo'] = photo_filename
+        user_states[f"create_item_data_{message.from_user.id}"] = item_data
+        
+        # Переходим к вводу данных товара (то что получит покупатель)
+        user_states[message.from_user.id] = 'create_entering_item_data'
+        bot.reply_to(
+            message,
+            "📦 Введите данные товара (то, что получит покупатель после оплаты):\n\n"
+            "Например: логин и пароль, ссылка на файл, код активации и т.д."
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке фото: {e}")
+        bot.reply_to(message, f"❌ Ошибка при сохранении фото: {str(e)}")
+
+
+@bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == 'create_entering_item_data')
+def handle_create_item_data(message):
+    """Обработчик ввода данных товара"""
+    if message.text == '/cancel':
+        user_states.pop(message.from_user.id, None)
+        bot.reply_to(message, "❌ Отменено")
+        return
+    
+    # Сохраняем данные товара
+    item_data = user_states.get(f"create_item_data_{message.from_user.id}", {})
+    item_data['item_content'] = message.text
+    user_states[f"create_item_data_{message.from_user.id}"] = item_data
+    
+    # Теперь создаем товары во всех выбранных категориях
+    bot.reply_to(message, "⏳ Создаю товары...")
+    
+    create_items_in_categories(message.from_user.id, message.chat.id)
+
+
+def create_items_in_categories(user_id, chat_id):
+    """Создание товаров во всех выбранных категориях"""
+    try:
+        selected_categories = user_states.get(f"create_selected_categories_{user_id}", [])
+        item_data = user_states.get(f"create_item_data_{user_id}", {})
+        game = user_states.get(f"create_current_game_{user_id}")
+        
+        if not selected_categories or not item_data or not game:
+            bot.send_message(chat_id, "❌ Ошибка: данные не найдены")
+            return
+        
+        created_items = []
+        errors = []
+        
+        for category_id in selected_categories:
+            try:
+                # Находим категорию
+                category = None
+                for cat in game.categories:
+                    if cat.id == category_id:
+                        category = cat
+                        break
+                
+                if not category:
+                    errors.append(f"Категория {category_id} не найдена")
+                    continue
+                
+                # Получаем полную информацию о категории
+                full_category = playerok_account.get_game_category(id=category_id)
+                
+                # Получаем типы получения для категории
+                obtaining_types = playerok_account.get_game_category_obtaining_types(category_id=category_id)
+                
+                if not obtaining_types or not obtaining_types.obtaining_types:
+                    errors.append(f"{category.name}: нет доступных типов получения")
+                    continue
+                
+                # Берем первый тип получения
+                obtaining_type = obtaining_types.obtaining_types[0]
+                
+                # Получаем data_fields для категории
+                data_fields_list = playerok_account.get_game_category_data_fields(
+                    category_id=category_id,
+                    obtaining_type_id=obtaining_type.id
+                )
+                
+                # Заполняем data_fields (только ITEM_DATA)
+                from playerokapi.types import GameCategoryDataField
+                from playerokapi.enums import GameCategoryDataFieldTypes
+                
+                filled_data_fields = []
+                if data_fields_list and data_fields_list.data_fields:
+                    for field in data_fields_list.data_fields:
+                        # Заполняем только поля типа ITEM_DATA
+                        if hasattr(field, 'type') and field.type == GameCategoryDataFieldTypes.ITEM_DATA:
+                            filled_field = GameCategoryDataField(
+                                id=field.id,
+                                name=field.name,
+                                type=field.type,
+                                value=item_data['item_content'],  # Данные товара
+                                is_required=field.is_required if hasattr(field, 'is_required') else False
+                            )
+                            filled_data_fields.append(filled_field)
+                
+                # Создаем товар
+                new_item = playerok_account.create_item(
+                    game_category_id=category_id,
+                    obtaining_type_id=obtaining_type.id,
+                    name=item_data['name'],
+                    price=item_data['price'],
+                    description=item_data['description'],
+                    options=[],  # Пока без опций
+                    data_fields=filled_data_fields,
+                    attachments=[item_data['photo']]
+                )
+                
+                # Публикуем товар с обычным приоритетом
+                priority_statuses = playerok_account.get_item_priority_statuses(
+                    item_id=new_item.id,
+                    item_price=new_item.price
+                )
+                
+                default_priority_id = None
+                for status in priority_statuses:
+                    if hasattr(status, 'type') and status.type.name == 'DEFAULT':
+                        default_priority_id = status.id
+                        break
+                
+                if default_priority_id:
+                    from playerokapi.enums import TransactionProviderIds
+                    published_item = playerok_account.publish_item(
+                        item_id=new_item.id,
+                        priority_status_id=default_priority_id,
+                        transaction_provider_id=TransactionProviderIds.LOCAL
+                    )
+                    created_items.append(f"✅ {category.name}: {published_item.id}")
+                else:
+                    created_items.append(f"⚠️ {category.name}: создан, но не опубликован (ID: {new_item.id})")
+                
+                logger.info(f"Товар создан в категории {category.name}, ID: {new_item.id}")
+                
+            except Exception as e:
+                logger.error(f"Ошибка создания товара в категории {category_id}: {e}")
+                errors.append(f"❌ {category.name if category else category_id}: {str(e)}")
+        
+        # Формируем отчет
+        report = "📊 Результаты создания товаров:\n\n"
+        
+        if created_items:
+            report += "Созданные товары:\n"
+            report += "\n".join(created_items)
+            report += "\n\n"
+        
+        if errors:
+            report += "Ошибки:\n"
+            report += "\n".join(errors)
+        
+        bot.send_message(chat_id, report)
+        
+        # Очищаем состояние
+        user_states.pop(f"create_games_{user_id}", None)
+        user_states.pop(f"create_current_game_{user_id}", None)
+        user_states.pop(f"create_selected_categories_{user_id}", None)
+        user_states.pop(f"create_item_data_{user_id}", None)
+        user_states.pop(user_id, None)
+        
+        # Удаляем временное фото
+        import os
+        if 'photo' in item_data and os.path.exists(item_data['photo']):
+            try:
+                os.remove(item_data['photo'])
+            except:
+                pass
+        
+    except Exception as e:
+        logger.error(f"Критическая ошибка при создании товаров: {e}", exc_info=True)
+        bot.send_message(chat_id, f"❌ Критическая ошибка: {str(e)}")
 
 
 def main():
