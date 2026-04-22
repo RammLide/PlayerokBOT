@@ -2376,8 +2376,8 @@ def create_items_in_categories(user_id, chat_id):
                     continue
                 
                 if not hasattr(obtaining_types, 'obtaining_types') or not obtaining_types.obtaining_types:
-                    errors.append(f"{category.name}: нет доступных типов получения")
-                    logger.error(f"У категории {category_id} нет obtaining_types")
+                    errors.append(f"⚠️ {category.name}: категория не поддерживает создание товаров (нет типов получения)")
+                    logger.warning(f"У категории {category_id} ({category.name}) нет obtaining_types - пропускаем")
                     continue
                 
                 logger.info(f"Найдено типов получения: {len(obtaining_types.obtaining_types)}")
