@@ -2380,12 +2380,17 @@ def create_items_in_categories(user_id, chat_id):
                 if hasattr(full_category, 'options') and full_category.options:
                     # Используем существующие опции из категории
                     options = full_category.options
+                    logger.info(f"Найдено опций для категории {category.name}: {len(options)}")
+                else:
+                    logger.info(f"У категории {category.name} нет опций")
                 
                 # Получаем data_fields для категории
                 data_fields_list = playerok_account.get_game_category_data_fields(
                     game_category_id=category_id,
                     obtaining_type_id=obtaining_type.id
                 )
+                
+                logger.info(f"Получено data_fields для {category.name}: {len(data_fields_list.data_fields) if data_fields_list and data_fields_list.data_fields else 0}")
                 
                 # Заполняем data_fields (только ITEM_DATA)
                 from playerokapi.types import GameCategoryDataField
@@ -2407,6 +2412,12 @@ def create_items_in_categories(user_id, chat_id):
                                 value=item_data['item_content']  # Данные товара
                             )
                             filled_data_fields.append(filled_field)
+                
+                logger.info(f"Создание товара в категории {category.name}:")
+                logger.info(f"  - Название: {item_data['name']}")
+                logger.info(f"  - Цена: {item_data['price']}")
+                logger.info(f"  - Опций: {len(options)}")
+                logger.info(f"  - Data fields: {len(filled_data_fields)}")
                 
                 # Создаем товар
                 new_item = playerok_account.create_item(
