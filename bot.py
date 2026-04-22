@@ -2381,6 +2381,8 @@ def create_items_in_categories(user_id, chat_id):
                     # Используем существующие опции из категории
                     options = full_category.options
                     logger.info(f"Найдено опций для категории {category.name}: {len(options)}")
+                    for opt in options:
+                        logger.info(f"  Опция: {opt.label if hasattr(opt, 'label') else 'N/A'}, field={opt.field if hasattr(opt, 'field') else 'N/A'}, value={opt.value if hasattr(opt, 'value') else 'N/A'}")
                 else:
                     logger.info(f"У категории {category.name} нет опций")
                 
