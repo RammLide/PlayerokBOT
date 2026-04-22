@@ -584,6 +584,20 @@ def echo_all(message):
     # Проверяем, не ищет ли пользователь игру
     elif message.from_user.id in user_states and user_states[message.from_user.id] == 'create_searching_game':
         handle_create_game_search(message)
+    # Проверяем, не создает ли пользователь товар
+    elif message.from_user.id in user_states and user_states[message.from_user.id].startswith('create_'):
+        # Обрабатываем все состояния создания товара
+        state = user_states[message.from_user.id]
+        if state == 'create_entering_name':
+            handle_create_name(message)
+        elif state == 'create_entering_price':
+            handle_create_price(message)
+        elif state == 'create_entering_description':
+            handle_create_description(message)
+        elif state == 'create_entering_item_data':
+            handle_create_item_data(message)
+        else:
+            bot.reply_to(message, "Используйте /help для просмотра доступных команд.")
     else:
         bot.reply_to(message, "Используйте /help для просмотра доступных команд.")
 
