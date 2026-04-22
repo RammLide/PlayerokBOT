@@ -2368,12 +2368,23 @@ def create_items_in_categories(user_id, chat_id):
                 # Получаем типы получения для категории
                 obtaining_types = playerok_account.get_game_category_obtaining_types(game_category_id=category_id)
                 
-                if not obtaining_types or not obtaining_types.obtaining_types:
-                    errors.append(f"{category.name}: нет доступных типов получения")
+                logger.info(f"Получение типов для категории {category.name}")
+                
+                if not obtaining_types:
+                    errors.append(f"{category.name}: не удалось получить типы получения (API вернул None)")
+                    logger.error(f"API вернул None для типов получения категории {category_id}")
                     continue
+                
+                if not hasattr(obtaining_types, 'obtaining_types') or not obtaining_types.obtaining_types:
+                    errors.append(f"{category.name}: нет доступных типов получения")
+                    logger.error(f"У категории {category_id} нет obtaining_types")
+                    continue
+                
+                logger.info(f"Найдено типов получения: {len(obtaining_types.obtaining_types)}")
                 
                 # Берем первый тип получения
                 obtaining_type = obtaining_types.obtaining_types[0]
+                logger.info(f"Используется тип получения: {obtaining_type.name if hasattr(obtaining_type, 'name') else obtaining_type.id}")
                 
                 # Получаем опции категории (если есть)
                 options = []
