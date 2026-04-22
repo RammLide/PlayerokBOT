@@ -227,19 +227,28 @@ class PlayerokListener:
             
             logger.info(f"Автовосстановление: создание копии товара {sold_item.name}")
             
-            # Загружаем фото
-            with open(photo_path, 'rb') as photo_file:
-                photo_data = photo_file.read()
+            # Подготавливаем опции (attributes) товара
+            options = []
+            if hasattr(sold_item, 'attributes') and sold_item.attributes:
+                from playerokapi.types import GameCategoryOption
+                for field, value in sold_item.attributes.items():
+                    options.append(GameCategoryOption(field=field, value=value))
+            
+            # Подготавливаем data_fields товара
+            data_fields = []
+            if hasattr(sold_item, 'data_fields') and sold_item.data_fields:
+                data_fields = sold_item.data_fields
             
             # Создаем новый товар с теми же параметрами
-            # Примечание: API метод create_item может отличаться, нужно проверить документацию playerokapi
             new_item = self.account.create_item(
+                game_category_id=sold_item.category.id,
+                obtaining_type_id=sold_item.obtaining_type.id if sold_item.obtaining_type else None,
                 name=sold_item.name,
-                description=sold_item.description,
                 price=sold_item.price,
-                game_id=sold_item.game.id if hasattr(sold_item, 'game') and sold_item.game else None,
-                category_id=sold_item.category.id if hasattr(sold_item, 'category') and sold_item.category else None,
-                photo=photo_data
+                description=sold_item.description,
+                options=options,
+                data_fields=data_fields,
+                attachments=[photo_path]  # Путь к оригинальному фото
             )
             
             logger.info(f"Автовосстановление: товар восстановлен, новый ID: {new_item.id}")
@@ -248,6 +257,7 @@ class PlayerokListener:
             admin_msg = (
                 f"🔄 Товар автоматически восстановлен\n\n"
                 f"Проданный товар: {sold_item.name}\n"
+                f"Категория: {sold_item.category.name}\n"
                 f"Старый ID: {item_id}\n"
                 f"Новый ID: {new_item.id}\n"
                 f"Сделка: {deal.id}"

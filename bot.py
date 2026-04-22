@@ -1519,9 +1519,10 @@ def show_autorestore_items_page(chat_id, user_id, page=0, message_id=None):
         markup.row(*nav_buttons)
     
     # Кнопка продолжить (если выбрано хотя бы 1 товар)
-    if selected_items:
+    if len(selected_items) > 0:
+        item_word = "товар" if len(selected_items) == 1 else "товара" if len(selected_items) < 5 else "товаров"
         continue_btn = types.InlineKeyboardButton(
-            text=f"✅ Продолжить ({len(selected_items)} выбрано)",
+            text=f"✅ Продолжить ({len(selected_items)} {item_word})",
             callback_data="autorestore_upload_photo"
         )
         markup.add(continue_btn)
@@ -1537,6 +1538,7 @@ def show_autorestore_items_page(chat_id, user_id, page=0, message_id=None):
         f"📦 Выберите товары для группы:\n\n"
         f"Выбрано: {len(selected_items)}\n"
         f"Всего товаров: {len(all_items)}\n\n"
+        f"💡 Можно выбрать один или несколько товаров.\n"
         f"Нажмите на товары для выбора, затем нажмите 'Продолжить'"
     )
     
@@ -1594,10 +1596,12 @@ def autorestore_upload_photo_callback(call):
     
     user_states[call.from_user.id] = 'uploading_group_photo'
     
+    item_word = "товара" if len(selected_items) == 1 else "товаров"
+    
     bot.answer_callback_query(call.id)
     bot.send_message(
         call.message.chat.id,
-        f"📸 Отправьте фото для группы из {len(selected_items)} товаров.\n\n"
+        f"📸 Отправьте фото для {len(selected_items)} {item_word}.\n\n"
         f"Это фото будет использоваться при автовосстановлении всех выбранных товаров.\n\n"
         f"Или отправьте /cancel для отмены."
     )
@@ -1646,12 +1650,14 @@ def handle_group_photo_upload(message):
         user_states.pop(f"autorestore_items_{message.from_user.id}", None)
         user_states.pop(f"autorestore_selected_{message.from_user.id}", None)
         
+        item_word = "товар" if len(selected_items) == 1 else "товара" if len(selected_items) < 5 else "товаров"
+        
         bot.reply_to(
             message,
             f"✅ Группа товаров создана!\n\n"
-            f"Товаров в группе: {len(selected_items)}\n"
+            f"{len(selected_items)} {item_word} в группе\n"
             f"ID группы: {group_id}\n\n"
-            f"Теперь при продаже любого из этих товаров будет автоматически создана копия с загруженным фото."
+            f"Теперь при продаже любого из этих товаров будет автоматически создана копия с загруженным фото в той же категории."
         )
         
         logger.info(f"Создана группа автовосстановления {group_id} с {len(selected_items)} товарами")
