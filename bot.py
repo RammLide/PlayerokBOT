@@ -1813,14 +1813,29 @@ def create_item_command(message):
         # Получаем список игр
         bot.reply_to(message, "⏳ Загружаю список игр...")
         
-        games_list = playerok_account.get_games(count=24)
+        # Получаем все игры (с пагинацией)
+        all_games = []
+        after_cursor = None
         
-        if not games_list or not games_list.games:
+        while True:
+            games_list = playerok_account.get_games(count=24, after_cursor=after_cursor)
+            
+            if not games_list or not games_list.games:
+                break
+            
+            all_games.extend(games_list.games)
+            
+            if hasattr(games_list, 'page_info') and games_list.page_info and games_list.page_info.has_next_page:
+                after_cursor = games_list.page_info.end_cursor
+            else:
+                break
+        
+        if not all_games:
             bot.reply_to(message, "❌ Не удалось получить список игр.")
             return
         
         # Сохраняем игры для выбора
-        user_states[f"create_games_{message.from_user.id}"] = games_list.games
+        user_states[f"create_all_games_{message.from_user.id}"] = all_games
         user_states[f"create_selected_categories_{message.from_user.id}"] = []
         
         # Показываем список игр
@@ -1831,21 +1846,58 @@ def create_item_command(message):
         bot.reply_to(message, f"❌ Произошла ошибка: {str(e)}")
 
 
-def show_games_list(chat_id, user_id, message_id=None):
+def show_games_list(chat_id, user_id, page=0, message_id=None):
     """Показать список игр для выбора"""
-    games = user_states.get(f"create_games_{user_id}", [])
+    all_games = user_states.get(f"create_all_games_{user_id}", [])
     
-    if not games:
+    if not all_games:
         return
+    
+    # Пагинация
+    games_per_page = 15
+    start_idx = page * games_per_page
+    end_idx = start_idx + games_per_page
+    page_games = all_games[start_idx:end_idx]
     
     markup = types.InlineKeyboardMarkup()
     
-    for game in games[:15]:  # Показываем первые 15 игр
+    # Кнопка поиска
+    search_btn = types.InlineKeyboardButton(
+        text="🔍 Поиск игры",
+        callback_data="create_search_game"
+    )
+    markup.add(search_btn)
+    
+    for game in page_games:
         btn = types.InlineKeyboardButton(
             text=game.name,
             callback_data=f"create_game_{game.id}"
         )
         markup.add(btn)
+    
+    # Кнопки навигации
+    nav_buttons = []
+    
+    if page > 0:
+        nav_buttons.append(types.InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=f"create_games_page_{page-1}"
+        ))
+    
+    total_pages = (len(all_games) + games_per_page - 1) // games_per_page
+    nav_buttons.append(types.InlineKeyboardButton(
+        text=f"📄 {page + 1}/{total_pages}",
+        callback_data="current_page"
+    ))
+    
+    if end_idx < len(all_games):
+        nav_buttons.append(types.InlineKeyboardButton(
+            text="Вперед ▶️",
+            callback_data=f"create_games_page_{page+1}"
+        ))
+    
+    if nav_buttons:
+        markup.row(*nav_buttons)
     
     cancel_btn = types.InlineKeyboardButton(
         text="❌ Отмена",
@@ -1853,7 +1905,7 @@ def show_games_list(chat_id, user_id, message_id=None):
     )
     markup.add(cancel_btn)
     
-    text = "🎮 Выберите игру для создания товара:"
+    text = f"🎮 Выберите игру для создания товара:\n\nВсего игр: {len(all_games)}"
     
     if message_id:
         try:
@@ -1867,6 +1919,125 @@ def show_games_list(chat_id, user_id, message_id=None):
             bot.send_message(chat_id, text, reply_markup=markup)
     else:
         bot.send_message(chat_id, text, reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("create_games_page_"))
+def create_games_page_callback(call):
+    """Навигация по страницам игр"""
+    page = int(call.data.replace("create_games_page_", ""))
+    bot.answer_callback_query(call.id)
+    show_games_list(call.message.chat.id, call.from_user.id, page, call.message.message_id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "create_search_game")
+def create_search_game_callback(call):
+    """Поиск игры"""
+    user_states[call.from_user.id] = 'create_searching_game'
+    user_states[f'create_search_msg_{call.from_user.id}'] = {
+        'chat_id': call.message.chat.id,
+        'message_id': call.message.message_id
+    }
+    
+    bot.answer_callback_query(call.id)
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text="🔍 Введите название игры или приложения для поиска:"
+    )
+
+
+@bot.message_handler(func=lambda message: user_states.get(message.from_user.id) == 'create_searching_game')
+def handle_create_game_search(message):
+    """Обработчик поиска игры"""
+    try:
+        search_query = message.text.strip().lower()
+        
+        if len(search_query) < 2:
+            bot.reply_to(message, "❌ Запрос слишком короткий. Введите минимум 2 символа.")
+            return
+        
+        # Получаем информацию о сообщении для редактирования
+        search_msg_info = user_states.get(f'create_search_msg_{message.from_user.id}')
+        
+        # Получаем все игры
+        all_games = user_states.get(f"create_all_games_{message.from_user.id}", [])
+        
+        # Фильтруем по поисковому запросу
+        filtered_games = [
+            game for game in all_games 
+            if search_query in game.name.lower()
+        ]
+        
+        user_states.pop(message.from_user.id, None)
+        user_states.pop(f'create_search_msg_{message.from_user.id}', None)
+        
+        if not filtered_games:
+            response = f"❌ Игры по запросу '{search_query}' не найдены."
+            
+            # Добавляем кнопку возврата
+            markup = types.InlineKeyboardMarkup()
+            back_btn = types.InlineKeyboardButton(text="◀️ Вернуться к списку", callback_data="create_back_to_games")
+            markup.add(back_btn)
+            
+            if search_msg_info:
+                bot.edit_message_text(
+                    chat_id=search_msg_info['chat_id'],
+                    message_id=search_msg_info['message_id'],
+                    text=response,
+                    reply_markup=markup
+                )
+                try:
+                    bot.delete_message(message.chat.id, message.message_id)
+                except:
+                    pass
+            else:
+                bot.send_message(message.chat.id, response, reply_markup=markup)
+            return
+        
+        # Показываем результаты поиска
+        markup = types.InlineKeyboardMarkup()
+        
+        # Кнопка возврата к полному списку
+        back_btn = types.InlineKeyboardButton(
+            text="◀️ Вернуться к полному списку",
+            callback_data="create_back_to_games"
+        )
+        markup.add(back_btn)
+        
+        for game in filtered_games[:15]:
+            btn = types.InlineKeyboardButton(
+                text=game.name,
+                callback_data=f"create_game_{game.id}"
+            )
+            markup.add(btn)
+        
+        cancel_btn = types.InlineKeyboardButton(
+            text="❌ Отмена",
+            callback_data="create_cancel"
+        )
+        markup.add(cancel_btn)
+        
+        response = f"🔍 Найдено игр: {len(filtered_games)}\n\nВыберите игру:"
+        
+        if search_msg_info:
+            bot.edit_message_text(
+                chat_id=search_msg_info['chat_id'],
+                message_id=search_msg_info['message_id'],
+                text=response,
+                reply_markup=markup
+            )
+            try:
+                bot.delete_message(message.chat.id, message.message_id)
+            except:
+                pass
+        else:
+            bot.send_message(message.chat.id, response, reply_markup=markup)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при поиске игры: {e}")
+        bot.reply_to(message, f"❌ Произошла ошибка при поиске: {str(e)}")
+        user_states.pop(message.from_user.id, None)
+        user_states.pop(f'create_search_msg_{message.from_user.id}', None)
 
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("create_game_"))
