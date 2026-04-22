@@ -595,11 +595,18 @@ def autoconfirm_command(message):
     item_messages = autoconfirm_settings.get_all_item_messages()
     item_count = len(item_messages)
     
+    # Информация об автовосстановлении
+    restore_status = "✅ Включено" if autoconfirm_settings.is_auto_restore_enabled() else "❌ Выключено"
+    photo_groups = autoconfirm_settings.get_all_photo_groups()
+    groups_count = len(photo_groups)
+    
     response = (
         f"⚙️ Настройки автоподтверждения\n\n"
         f"Статус: {status}\n"
         f"Глобальное сообщение: {global_status}\n"
         f"Настроено товаров: {item_count}\n\n"
+        f"🔄 Автовосстановление: {restore_status}\n"
+        f"Групп товаров: {groups_count}\n\n"
         f"Выберите действие:"
     )
     
@@ -624,6 +631,12 @@ def autoconfirm_command(message):
         callback_data="autoconfirm_item"
     )
     
+    # Кнопка автовосстановления
+    restore_btn = types.InlineKeyboardButton(
+        text="🔄 Автовосстановление товаров",
+        callback_data="autorestore_menu"
+    )
+    
     # Кнопка просмотра настроенных товаров
     if item_count > 0:
         view_btn = types.InlineKeyboardButton(
@@ -633,11 +646,13 @@ def autoconfirm_command(message):
         markup.add(toggle_btn)
         markup.add(global_btn)
         markup.add(item_btn)
+        markup.add(restore_btn)
         markup.add(view_btn)
     else:
         markup.add(toggle_btn)
         markup.add(global_btn)
         markup.add(item_btn)
+        markup.add(restore_btn)
     
     bot.send_message(message.chat.id, response, reply_markup=markup)
 
@@ -1342,6 +1357,428 @@ def back_to_chats_callback(call):
     except Exception as e:
         logger.error(f"Ошибка при возврате к чатам: {e}")
         bot.answer_callback_query(call.id, text="❌ Ошибка при загрузке чатов")
+
+
+# ============= АВТОВОССТАНОВЛЕНИЕ ТОВАРОВ =============
+
+@bot.callback_query_handler(func=lambda call: call.data == "autorestore_menu")
+def autorestore_menu_callback(call):
+    """Меню автовосстановления товаров"""
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, text="❌ У вас нет доступа")
+        return
+    
+    restore_status = "✅ Включено" if autoconfirm_settings.is_auto_restore_enabled() else "❌ Выключено"
+    photo_groups = autoconfirm_settings.get_all_photo_groups()
+    groups_count = len(photo_groups)
+    
+    response = (
+        f"🔄 Автовосстановление товаров\n\n"
+        f"Статус: {restore_status}\n"
+        f"Групп товаров: {groups_count}\n\n"
+        f"При продаже товара автоматически создается его копия с оригинальным фото.\n\n"
+        f"Выберите действие:"
+    )
+    
+    markup = types.InlineKeyboardMarkup()
+    
+    # Кнопка включения/выключения
+    toggle_text = "❌ Выключить" if autoconfirm_settings.is_auto_restore_enabled() else "✅ Включить"
+    toggle_btn = types.InlineKeyboardButton(
+        text=toggle_text,
+        callback_data="autorestore_toggle"
+    )
+    
+    # Кнопка создания группы
+    create_btn = types.InlineKeyboardButton(
+        text="📸 Создать группу товаров",
+        callback_data="autorestore_create"
+    )
+    
+    markup.add(toggle_btn)
+    markup.add(create_btn)
+    
+    # Кнопка просмотра групп
+    if groups_count > 0:
+        view_btn = types.InlineKeyboardButton(
+            text=f"📋 Просмотр групп ({groups_count})",
+            callback_data="autorestore_view"
+        )
+        markup.add(view_btn)
+    
+    # Кнопка назад
+    back_btn = types.InlineKeyboardButton(
+        text="◀️ Назад",
+        callback_data="autoconfirm_back"
+    )
+    markup.add(back_btn)
+    
+    bot.answer_callback_query(call.id)
+    
+    try:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=response,
+            reply_markup=markup
+        )
+    except:
+        bot.send_message(call.message.chat.id, response, reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "autorestore_toggle")
+def autorestore_toggle_callback(call):
+    """Переключение автовосстановления"""
+    if not is_admin(call.from_user.id):
+        bot.answer_callback_query(call.id, text="❌ У вас нет доступа")
+        return
+    
+    if autoconfirm_settings.is_auto_restore_enabled():
+        autoconfirm_settings.disable_auto_restore()
+        bot.answer_callback_query(call.id, text="❌ Автовосстановление выключено")
+    else:
+        autoconfirm_settings.enable_auto_restore()
+        bot.answer_callback_query(call.id, text="✅ Автовосстановление включено")
+    
+    # Обновляем меню
+    autorestore_menu_callback(call)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "autorestore_create")
+def autorestore_create_callback(call):
+    """Начало создания группы товаров"""
+    try:
+        bot.answer_callback_query(call.id, text="⏳ Загружаю товары...")
+        
+        # Получаем все товары
+        all_items = get_all_active_items()
+        
+        if not all_items:
+            bot.send_message(call.message.chat.id, "❌ У вас нет активных товаров.")
+            return
+        
+        # Сохраняем товары и инициализируем выбор
+        user_states[f"autorestore_items_{call.from_user.id}"] = all_items
+        user_states[f"autorestore_selected_{call.from_user.id}"] = []
+        
+        # Показываем первую страницу с товарами
+        show_autorestore_items_page(call.message.chat.id, call.from_user.id, page=0)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при создании группы: {e}")
+        bot.send_message(call.message.chat.id, f"❌ Ошибка: {str(e)}")
+
+
+def show_autorestore_items_page(chat_id, user_id, page=0, message_id=None):
+    """Показать страницу с товарами для выбора в группу"""
+    all_items = user_states.get(f"autorestore_items_{user_id}", [])
+    selected_items = user_states.get(f"autorestore_selected_{user_id}", [])
+    
+    if not all_items:
+        return
+    
+    start_idx = page * ITEMS_PER_PAGE
+    end_idx = start_idx + ITEMS_PER_PAGE
+    page_items = all_items[start_idx:end_idx]
+    
+    markup = types.InlineKeyboardMarkup()
+    
+    # Кнопки с товарами (с галочками для выбранных)
+    for item in page_items:
+        is_selected = item.id in selected_items
+        prefix = "✅ " if is_selected else "⬜ "
+        btn_text = f"{prefix}{item.name[:40]}"
+        btn = types.InlineKeyboardButton(
+            text=btn_text,
+            callback_data=f"autorestore_toggle_item_{item.id}"
+        )
+        markup.add(btn)
+    
+    # Кнопки навигации
+    nav_buttons = []
+    
+    if page > 0:
+        nav_buttons.append(types.InlineKeyboardButton(
+            text="◀️ Назад",
+            callback_data=f"autorestore_items_page_{page-1}"
+        ))
+    
+    total_pages = (len(all_items) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    nav_buttons.append(types.InlineKeyboardButton(
+        text=f"📄 {page + 1}/{total_pages}",
+        callback_data="current_page"
+    ))
+    
+    if end_idx < len(all_items):
+        nav_buttons.append(types.InlineKeyboardButton(
+            text="Вперед ▶️",
+            callback_data=f"autorestore_items_page_{page+1}"
+        ))
+    
+    if nav_buttons:
+        markup.row(*nav_buttons)
+    
+    # Кнопка продолжить (если выбрано хотя бы 1 товар)
+    if selected_items:
+        continue_btn = types.InlineKeyboardButton(
+            text=f"✅ Продолжить ({len(selected_items)} выбрано)",
+            callback_data="autorestore_upload_photo"
+        )
+        markup.add(continue_btn)
+    
+    # Кнопка отмены
+    cancel_btn = types.InlineKeyboardButton(
+        text="❌ Отмена",
+        callback_data="autorestore_cancel"
+    )
+    markup.add(cancel_btn)
+    
+    text = (
+        f"📦 Выберите товары для группы:\n\n"
+        f"Выбрано: {len(selected_items)}\n"
+        f"Всего товаров: {len(all_items)}\n\n"
+        f"Нажмите на товары для выбора, затем нажмите 'Продолжить'"
+    )
+    
+    if message_id:
+        try:
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=text,
+                reply_markup=markup
+            )
+        except:
+            bot.send_message(chat_id, text, reply_markup=markup)
+    else:
+        bot.send_message(chat_id, text, reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("autorestore_toggle_item_"))
+def autorestore_toggle_item_callback(call):
+    """Переключение выбора товара"""
+    item_id = call.data.replace("autorestore_toggle_item_", "")
+    
+    selected_items = user_states.get(f"autorestore_selected_{call.from_user.id}", [])
+    
+    if item_id in selected_items:
+        selected_items.remove(item_id)
+    else:
+        selected_items.append(item_id)
+    
+    user_states[f"autorestore_selected_{call.from_user.id}"] = selected_items
+    
+    bot.answer_callback_query(call.id)
+    
+    # Обновляем страницу
+    # Определяем текущую страницу из сообщения
+    show_autorestore_items_page(call.message.chat.id, call.from_user.id, page=0, message_id=call.message.message_id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("autorestore_items_page_"))
+def autorestore_items_page_callback(call):
+    """Навигация по страницам товаров для автовосстановления"""
+    page = int(call.data.replace("autorestore_items_page_", ""))
+    bot.answer_callback_query(call.id)
+    show_autorestore_items_page(call.message.chat.id, call.from_user.id, page, call.message.message_id)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "autorestore_upload_photo")
+def autorestore_upload_photo_callback(call):
+    """Запрос на загрузку фото для группы"""
+    selected_items = user_states.get(f"autorestore_selected_{call.from_user.id}", [])
+    
+    if not selected_items:
+        bot.answer_callback_query(call.id, text="❌ Выберите хотя бы один товар")
+        return
+    
+    user_states[call.from_user.id] = 'uploading_group_photo'
+    
+    bot.answer_callback_query(call.id)
+    bot.send_message(
+        call.message.chat.id,
+        f"📸 Отправьте фото для группы из {len(selected_items)} товаров.\n\n"
+        f"Это фото будет использоваться при автовосстановлении всех выбранных товаров.\n\n"
+        f"Или отправьте /cancel для отмены."
+    )
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "autorestore_cancel")
+def autorestore_cancel_callback(call):
+    """Отмена создания группы"""
+    user_states.pop(f"autorestore_items_{call.from_user.id}", None)
+    user_states.pop(f"autorestore_selected_{call.from_user.id}", None)
+    
+    bot.answer_callback_query(call.id, text="❌ Отменено")
+    autorestore_menu_callback(call)
+
+
+@bot.message_handler(content_types=['photo'], func=lambda message: user_states.get(message.from_user.id) == 'uploading_group_photo')
+def handle_group_photo_upload(message):
+    """Обработчик загрузки фото для группы товаров"""
+    try:
+        selected_items = user_states.get(f"autorestore_selected_{message.from_user.id}", [])
+        
+        if not selected_items:
+            bot.reply_to(message, "❌ Ошибка: товары не выбраны")
+            user_states.pop(message.from_user.id, None)
+            return
+        
+        # Получаем файл фото (самое большое разрешение)
+        file_id = message.photo[-1].file_id
+        file_info = bot.get_file(file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        
+        # Создаем имя файла
+        import time
+        timestamp = int(time.time())
+        photo_filename = f"item_photos/group_{timestamp}.jpg"
+        
+        # Сохраняем фото
+        with open(photo_filename, 'wb') as f:
+            f.write(downloaded_file)
+        
+        # Создаем группу в настройках
+        group_id = autoconfirm_settings.create_photo_group(selected_items, photo_filename)
+        
+        # Очищаем состояние
+        user_states.pop(message.from_user.id, None)
+        user_states.pop(f"autorestore_items_{message.from_user.id}", None)
+        user_states.pop(f"autorestore_selected_{message.from_user.id}", None)
+        
+        bot.reply_to(
+            message,
+            f"✅ Группа товаров создана!\n\n"
+            f"Товаров в группе: {len(selected_items)}\n"
+            f"ID группы: {group_id}\n\n"
+            f"Теперь при продаже любого из этих товаров будет автоматически создана копия с загруженным фото."
+        )
+        
+        logger.info(f"Создана группа автовосстановления {group_id} с {len(selected_items)} товарами")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке фото группы: {e}")
+        bot.reply_to(message, f"❌ Ошибка при сохранении фото: {str(e)}")
+        user_states.pop(message.from_user.id, None)
+
+
+@bot.callback_query_handler(func=lambda call: call.data == "autorestore_view")
+def autorestore_view_callback(call):
+    """Просмотр существующих групп товаров"""
+    photo_groups = autoconfirm_settings.get_all_photo_groups()
+    
+    if not photo_groups:
+        bot.answer_callback_query(call.id, text="❌ Нет созданных групп")
+        return
+    
+    response = "📋 Группы товаров для автовосстановления:\n\n"
+    
+    markup = types.InlineKeyboardMarkup()
+    
+    for group_id, group_data in photo_groups.items():
+        item_ids = group_data.get('item_ids', [])
+        response += f"🔹 {group_id}\n"
+        response += f"   Товаров: {len(item_ids)}\n\n"
+        
+        # Кнопка для просмотра/удаления группы
+        btn = types.InlineKeyboardButton(
+            text=f"📦 {group_id} ({len(item_ids)} товаров)",
+            callback_data=f"autorestore_group_{group_id}"
+        )
+        markup.add(btn)
+    
+    back_btn = types.InlineKeyboardButton(
+        text="◀️ Назад",
+        callback_data="autorestore_menu"
+    )
+    markup.add(back_btn)
+    
+    bot.answer_callback_query(call.id)
+    
+    try:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=response,
+            reply_markup=markup
+        )
+    except:
+        bot.send_message(call.message.chat.id, response, reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("autorestore_group_"))
+def autorestore_group_details_callback(call):
+    """Детали группы товаров"""
+    group_id = call.data.replace("autorestore_group_", "")
+    
+    photo_groups = autoconfirm_settings.get_all_photo_groups()
+    group_data = photo_groups.get(group_id)
+    
+    if not group_data:
+        bot.answer_callback_query(call.id, text="❌ Группа не найдена")
+        return
+    
+    item_ids = group_data.get('item_ids', [])
+    photo_path = group_data.get('photo_path', 'N/A')
+    
+    response = f"📦 Группа: {group_id}\n\n"
+    response += f"Товаров в группе: {len(item_ids)}\n"
+    response += f"Фото: {photo_path}\n\n"
+    response += "Товары:\n"
+    
+    # Получаем названия товаров
+    for item_id in item_ids[:10]:  # Показываем первые 10
+        try:
+            item = playerok_account.get_item(id=item_id)
+            response += f"• {item.name[:40]}\n"
+        except:
+            response += f"• ID: {item_id[:8]}\n"
+    
+    if len(item_ids) > 10:
+        response += f"... и еще {len(item_ids) - 10} товаров\n"
+    
+    markup = types.InlineKeyboardMarkup()
+    
+    # Кнопка удаления группы
+    delete_btn = types.InlineKeyboardButton(
+        text="🗑 Удалить группу",
+        callback_data=f"autorestore_delete_{group_id}"
+    )
+    
+    back_btn = types.InlineKeyboardButton(
+        text="◀️ Назад к списку",
+        callback_data="autorestore_view"
+    )
+    
+    markup.add(delete_btn)
+    markup.add(back_btn)
+    
+    bot.answer_callback_query(call.id)
+    
+    try:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=response,
+            reply_markup=markup
+        )
+    except:
+        bot.send_message(call.message.chat.id, response, reply_markup=markup)
+
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("autorestore_delete_"))
+def autorestore_delete_group_callback(call):
+    """Удаление группы товаров"""
+    group_id = call.data.replace("autorestore_delete_", "")
+    
+    if autoconfirm_settings.delete_photo_group(group_id):
+        bot.answer_callback_query(call.id, text="✅ Группа удалена")
+        logger.info(f"Группа автовосстановления {group_id} удалена")
+    else:
+        bot.answer_callback_query(call.id, text="❌ Ошибка удаления")
+    
+    # Возвращаемся к списку групп
+    autorestore_view_callback(call)
 
 
 def main():

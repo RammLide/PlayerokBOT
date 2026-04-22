@@ -184,6 +184,10 @@ class PlayerokListener:
                         admin_msg += f"\n\nОтправлено сообщение:\n{custom_message[:100]}"
                     self._send_to_admins(admin_msg)
                     
+                    # Автовосстановление товара
+                    if self.autoconfirm_settings.is_auto_restore_enabled():
+                        self._restore_item(item_id, event.deal)
+                    
             except Exception as e:
                 logger.error(f"Ошибка автоподтверждения: {e}")
                 error_msg = f"❌ Ошибка автоподтверждения\n\nСделка ID: {event.deal.id}\nОшибка: {str(e)}"
@@ -199,6 +203,65 @@ class PlayerokListener:
         )
         
         self._send_to_admins(message_text)
+    
+    def _restore_item(self, item_id, deal):
+        """Автовосстановление товара после продажи"""
+        try:
+            # Проверяем, есть ли фото для этого товара
+            photo_path = self.autoconfirm_settings.get_photo_for_item(item_id)
+            
+            if not photo_path:
+                logger.info(f"Автовосстановление: товар {item_id} не настроен для восстановления")
+                return
+            
+            # Проверяем существование файла
+            import os
+            if not os.path.exists(photo_path):
+                logger.error(f"Автовосстановление: файл фото не найден: {photo_path}")
+                error_msg = f"❌ Ошибка автовосстановления\n\nТовар ID: {item_id}\nФайл фото не найден: {photo_path}"
+                self._send_to_admins(error_msg)
+                return
+            
+            # Получаем данные проданного товара
+            sold_item = self.account.get_item(id=item_id)
+            
+            logger.info(f"Автовосстановление: создание копии товара {sold_item.name}")
+            
+            # Загружаем фото
+            with open(photo_path, 'rb') as photo_file:
+                photo_data = photo_file.read()
+            
+            # Создаем новый товар с теми же параметрами
+            # Примечание: API метод create_item может отличаться, нужно проверить документацию playerokapi
+            new_item = self.account.create_item(
+                name=sold_item.name,
+                description=sold_item.description,
+                price=sold_item.price,
+                game_id=sold_item.game.id if hasattr(sold_item, 'game') and sold_item.game else None,
+                category_id=sold_item.category.id if hasattr(sold_item, 'category') and sold_item.category else None,
+                photo=photo_data
+            )
+            
+            logger.info(f"Автовосстановление: товар восстановлен, новый ID: {new_item.id}")
+            
+            # Уведомляем админов
+            admin_msg = (
+                f"🔄 Товар автоматически восстановлен\n\n"
+                f"Проданный товар: {sold_item.name}\n"
+                f"Старый ID: {item_id}\n"
+                f"Новый ID: {new_item.id}\n"
+                f"Сделка: {deal.id}"
+            )
+            self._send_to_admins(admin_msg)
+            
+        except Exception as e:
+            logger.error(f"Ошибка автовосстановления товара {item_id}: {e}", exc_info=True)
+            error_msg = (
+                f"❌ Ошибка автовосстановления\n\n"
+                f"Товар ID: {item_id}\n"
+                f"Ошибка: {str(e)}"
+            )
+            self._send_to_admins(error_msg)
     
     def _send_to_admins(self, text, chat_id=None):
         """Отправка уведомления всем администраторам"""
