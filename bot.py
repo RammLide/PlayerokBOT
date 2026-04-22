@@ -2156,7 +2156,8 @@ def create_toggle_category_callback(call):
 def create_back_to_games_callback(call):
     """Возврат к списку игр"""
     bot.answer_callback_query(call.id)
-    show_games_list(call.message.chat.id, call.from_user.id, call.message.message_id)
+    # Всегда возвращаемся на первую страницу
+    show_games_list(call.message.chat.id, call.from_user.id, page=0, message_id=call.message.message_id)
 
 
 @bot.callback_query_handler(func=lambda call: call.data == "create_continue")
