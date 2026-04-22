@@ -2366,7 +2366,7 @@ def create_items_in_categories(user_id, chat_id):
                 full_category = playerok_account.get_game_category(id=category_id)
                 
                 # Получаем типы получения для категории
-                obtaining_types = playerok_account.get_game_category_obtaining_types(category_id=category_id)
+                obtaining_types = playerok_account.get_game_category_obtaining_types(game_category_id=category_id)
                 
                 if not obtaining_types or not obtaining_types.obtaining_types:
                     errors.append(f"{category.name}: нет доступных типов получения")
@@ -2377,7 +2377,7 @@ def create_items_in_categories(user_id, chat_id):
                 
                 # Получаем data_fields для категории
                 data_fields_list = playerok_account.get_game_category_data_fields(
-                    category_id=category_id,
+                    game_category_id=category_id,
                     obtaining_type_id=obtaining_type.id
                 )
                 
