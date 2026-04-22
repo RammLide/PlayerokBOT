@@ -251,7 +251,36 @@ class PlayerokListener:
                 attachments=[photo_path]  # Путь к оригинальному фото
             )
             
-            logger.info(f"Автовосстановление: товар восстановлен, новый ID: {new_item.id}")
+            logger.info(f"Автовосстановление: товар создан в черновике, ID: {new_item.id}")
+            
+            # Получаем доступные статусы приоритета для товара
+            priority_statuses = self.account.get_item_priority_statuses(
+                item_id=new_item.id,
+                item_price=new_item.price
+            )
+            
+            # Ищем обычный (DEFAULT) приоритет
+            default_priority_id = None
+            for status in priority_statuses:
+                if hasattr(status, 'type') and status.type.name == 'DEFAULT':
+                    default_priority_id = status.id
+                    break
+            
+            if not default_priority_id:
+                logger.error(f"Автовосстановление: не найден DEFAULT приоритет для товара {new_item.id}")
+                error_msg = f"❌ Товар создан, но не опубликован\n\nТовар ID: {new_item.id}\nНе найден обычный приоритет"
+                self._send_to_admins(error_msg)
+                return
+            
+            # Публикуем товар с обычным приоритетом
+            from playerokapi.enums import TransactionProviderIds
+            published_item = self.account.publish_item(
+                item_id=new_item.id,
+                priority_status_id=default_priority_id,
+                transaction_provider_id=TransactionProviderIds.LOCAL
+            )
+            
+            logger.info(f"Автовосстановление: товар опубликован с обычным приоритетом, ID: {published_item.id}")
             
             # Уведомляем админов
             admin_msg = (
@@ -259,7 +288,8 @@ class PlayerokListener:
                 f"Проданный товар: {sold_item.name}\n"
                 f"Категория: {sold_item.category.name}\n"
                 f"Старый ID: {item_id}\n"
-                f"Новый ID: {new_item.id}\n"
+                f"Новый ID: {published_item.id}\n"
+                f"Приоритет: Обычный\n"
                 f"Сделка: {deal.id}"
             )
             self._send_to_admins(admin_msg)
