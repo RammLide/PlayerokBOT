@@ -2392,10 +2392,13 @@ def create_items_in_categories(user_id, chat_id):
                         if hasattr(field, 'type') and field.type == GameCategoryDataFieldTypes.ITEM_DATA:
                             filled_field = GameCategoryDataField(
                                 id=field.id,
-                                name=field.name,
+                                label=field.label,
                                 type=field.type,
-                                value=item_data['item_content'],  # Данные товара
-                                is_required=field.is_required if hasattr(field, 'is_required') else False
+                                input_type=field.input_type,
+                                copyable=field.copyable if hasattr(field, 'copyable') else False,
+                                hidden=field.hidden if hasattr(field, 'hidden') else False,
+                                required=field.required if hasattr(field, 'required') else False,
+                                value=item_data['item_content']  # Данные товара
                             )
                             filled_data_fields.append(filled_field)
                 
