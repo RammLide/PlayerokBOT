@@ -2375,6 +2375,12 @@ def create_items_in_categories(user_id, chat_id):
                 # Берем первый тип получения
                 obtaining_type = obtaining_types.obtaining_types[0]
                 
+                # Получаем опции категории (если есть)
+                options = []
+                if hasattr(full_category, 'options') and full_category.options:
+                    # Используем существующие опции из категории
+                    options = full_category.options
+                
                 # Получаем data_fields для категории
                 data_fields_list = playerok_account.get_game_category_data_fields(
                     game_category_id=category_id,
@@ -2409,7 +2415,7 @@ def create_items_in_categories(user_id, chat_id):
                     name=item_data['name'],
                     price=item_data['price'],
                     description=item_data['description'],
-                    options=[],  # Пока без опций
+                    options=options,  # Используем опции из категории
                     data_fields=filled_data_fields,
                     attachments=[item_data['photo']]
                 )
