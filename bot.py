@@ -33,6 +33,12 @@ logger = logging.getLogger(__name__)
 # Инициализация бота
 bot = telebot.TeleBot(config.TELEGRAM_BOT_TOKEN)
 
+# Настройка прокси для Telegram, если указан
+if hasattr(config, 'TELEGRAM_PROXY') and config.TELEGRAM_PROXY:
+    from telebot import apihelper
+    apihelper.proxy = {'https': config.TELEGRAM_PROXY}
+    logger.info(f"Используется прокси для Telegram: {config.TELEGRAM_PROXY}")
+
 # Инициализация Playerok аккаунта
 try:
     playerok_account = Account(
