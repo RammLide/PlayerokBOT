@@ -39,3 +39,12 @@ wheels/
 # OS
 .DS_Store
 Thumbs.db
+
+# Virtual environment
+.venv/
+
+# Settings
+autoconfirm_settings.json
+
+# Item photos
+item_photos/

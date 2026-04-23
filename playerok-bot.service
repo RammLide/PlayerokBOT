@@ -1,0 +1,16 @@
+[Unit]
+Description=Playerok Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/PlayerokBOT
+ExecStart=/usr/bin/python3 /root/PlayerokBOT/bot.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/root/PlayerokBOT/bot.log
+StandardError=append:/root/PlayerokBOT/bot.log
+
+[Install]
+WantedBy=multi-user.target
